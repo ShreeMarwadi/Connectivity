@@ -9,7 +9,7 @@ Extend your display, mirror screens both ways, share files and forward mouse & k
 [![Download for Windows](https://img.shields.io/badge/Windows-Download_.exe-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/ShreeMarwadi/SmartConnectClone/releases/latest)
 [![Download for Android](https://img.shields.io/badge/Android-Download_.apk-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/ShreeMarwadi/SmartConnectClone/releases/latest)
 
-![Overview](SS-1.png)
+![Overview](https://github.com/ShreeMarwadi/Connectivity/blob/43dea828baefb5db73079108f25a0037b3cf080e/SS-1)
 
 </div>
 
