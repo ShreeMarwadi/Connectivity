@@ -31,11 +31,11 @@ Extend your display, mirror screens both ways, share files and forward mouse & k
 
 <table>
   <tr>
-    <td align="center"><b>Mirror & control</b><br><img src="https://github.com/ShreeMarwadi/Connectivity/blob/e81d590aba7696d1829f88fa1ede8ddb67cc9e05/Extend.png" width="480"></td>
-    <td align="center"><b>Extend display</b><br><img src="[docs/screenshots/extend-display.png](https://github.com/ShreeMarwadi/Connectivity/blob/6ec7ff52a4606971f6e112ee6e4b8bef39902025/Extend.png)" width="480"></td>
+    <td align="center"><b>Mirror & control</b><br><img src="https://github.com/ShreeMarwadi/Connectivity/blob/aeb18a26d1dac786c2f25b4341e2fe58982cb84d/mirror%20n%20control.png" width="480"></td>
+    <td align="center"><b>Extend display</b><br><img src="https://github.com/ShreeMarwadi/Connectivity/blob/e81d590aba7696d1829f88fa1ede8ddb67cc9e05/Extend.png" width="480"></td>
   </tr>
 </table>
-
+https://github.com/ShreeMarwadi/Connectivity/blob/aeb18a26d1dac786c2f25b4341e2fe58982cb84d/mirror%20n%20control.png
 ## 🚀 Getting started
 
 ### What you need
