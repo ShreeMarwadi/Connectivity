@@ -1,0 +1,60 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.smartconnectlike.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.smartconnectlike.app'
+        minSdk 24
+        targetSdk 34
+        versionCode 3
+        versionName '1.0.2'
+    }
+
+    // Local self-signed key so the release APK installs directly (no Play Store involved).
+    // Not a secret: it only proves the APK was not modified after this build.
+    signingConfigs {
+        release {
+            storeFile file('smartconnectlike-release.jks')
+            storePassword 'redacted-use-keystore-properties'
+            keyAlias 'smartconnectlike'
+            keyPassword 'redacted-use-keystore-properties'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE', 'META-INF/LICENSE.txt', 'META-INF/NOTICE']
+        }
+    }
+
+    lint {
+        abortOnError false
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'io.github.webrtc-sdk:android:125.6422.07'
+}

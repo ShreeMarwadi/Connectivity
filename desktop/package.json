@@ -1,0 +1,70 @@
+{
+  "name": "smartconnectlike-desktop",
+  "version": "1.0.1",
+  "description": "SmartConnectLike - local device hub (screen mirroring, extend, file share, input sharing)",
+  "main": "dist/main/index.js",
+  "author": "SmartConnectLike",
+  "license": "MIT",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
+    "build": "npm run build:vite && npm run build:main",
+    "build:vite": "vite build",
+    "build:main": "tsc -p tsconfig.main.json",
+    "start": "electron .",
+    "dist": "npm run build && electron-builder --win nsis",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "bonjour-service": "^1.2.1",
+    "koffi": "^2.9.0",
+    "uuid": "^9.0.1",
+    "ws": "^8.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/ws": "^8.5.10",
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
+    "electron": "^31.7.7",
+    "electron-builder": "^25.1.8",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.11",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.smartconnectlike.desktop",
+    "productName": "Connectivity",
+    "icon": "build/icon.png",
+    "directories": {
+      "output": "../dist-desktop"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "Connectivity-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Connectivity"
+    }
+  },
+  "allowScripts": {
+    "electron@31.7.7": true,
+    "koffi@2.16.3": true,
+    "esbuild@0.21.5": true
+  }
+}

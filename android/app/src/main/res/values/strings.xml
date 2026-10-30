@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Connectivity</string>
+    <string name="app_tagline">Your PC and tablet, connected locally</string>
+    <string name="notif_channel_name">Screen sharing</string>
+    <string name="notif_sharing_title">Sharing your tablet screen</string>
+    <string name="notif_sharing_text">Tap to return to Connectivity</string>
+</resources>
