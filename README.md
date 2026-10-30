@@ -31,7 +31,7 @@ Extend your display, mirror screens both ways, share files and forward mouse & k
 
 <table>
   <tr>
-    <td align="center"><b>Mirror & control</b><br><img src="docs/screenshots/mirror.png" width="480"></td>
+    <td align="center"><b>Mirror & control</b><br><img src="[docs/screenshots/mirror.png](https://github.com/ShreeMarwadi/Connectivity/blob/123ea32aa5678661e1b2380895306980cba91ca4/mirror%20n%20control.png)" width="480"></td>
     <td align="center"><b>Extend display</b><br><img src="[docs/screenshots/extend-display.png](https://github.com/ShreeMarwadi/Connectivity/blob/6ec7ff52a4606971f6e112ee6e4b8bef39902025/Extend.png)" width="480"></td>
   </tr>
 </table>
