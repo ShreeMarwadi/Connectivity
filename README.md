@@ -45,7 +45,7 @@ Extend your display, mirror screens both ways, share files and forward mouse & k
 ### Install
 
 1. Open the [**Releases**](https://github.com/ShreeMarwadi/SmartConnectClone/releases/latest) page.
-2. Download **`Connectivity.exe`** and run it on your PC.
+2. Download **`Connectivity.lnk`** and run it on your PC.
 3. Download **`Connectivity.apk`**, copy it to your tablet/phone and install it. (Android may ask you to allow *Install unknown apps* for your file manager or browser.)
 4. Open the app on both devices. The tablet shows up in the PC app automatically within a few seconds.
 
