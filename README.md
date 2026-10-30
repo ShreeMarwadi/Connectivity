@@ -86,7 +86,3 @@ Bug reports and ideas are welcome — open an [issue](https://github.com/ShreeMa
 ## 👤 Author
 
 Made by **Shardul**.
-
-## 📄 License
-
-Add a `LICENSE` file to choose how others may use this project (MIT is a common choice).
