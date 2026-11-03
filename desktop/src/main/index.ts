@@ -6,7 +6,7 @@ import { Discovery, primaryAddress } from './discovery';
 import { LocalServer } from './server';
 import { FileService } from './files';
 import { InputController } from './input';
-import { disposeVcam, vcamDisable, vcamEnable, vcamFrame, vcamStatus, vcamStop } from './vcam';
+import { disposeVcam, vcamDisable, vcamEnable, vcamFrame, vcamPlaceholder, vcamPrime, vcamStart, vcamStatus, vcamStop } from './vcam';
 import { getSettings, updateSettings } from './settings';
 import type { CaptureTarget, DisplayInfo, PeerInfo, Settings, WindowSource, WsEnvelope } from '../shared/types';
 
@@ -467,10 +467,20 @@ function registerIpc(): void {
   ipcMain.handle('displays:list', () => displayList());
 
   ipcMain.handle('vcam:status', () => vcamStatus());
-  ipcMain.handle('vcam:enable', () => vcamEnable());
+  ipcMain.handle('vcam:enable', async () => {
+    const status = await vcamEnable();
+    // Prime the placeholder writer so a camera opened in another app shows a
+    // dark "no signal" card instead of the filter's green error pattern.
+    if (status.registered) vcamPrime();
+    return status;
+  });
   ipcMain.handle('vcam:disable', () => vcamDisable());
+  ipcMain.handle('vcam:start', () => vcamStart());
   ipcMain.handle('vcam:frame', (_e, rgba: ArrayBuffer, width: number, height: number) =>
     vcamFrame(rgba, width, height),
+  );
+  ipcMain.handle('vcam:placeholder', (_e, rgba: ArrayBuffer, width: number, height: number) =>
+    vcamPlaceholder(rgba, width, height),
   );
   ipcMain.handle('vcam:stop', () => {
     vcamStop();
@@ -571,6 +581,15 @@ if (!gotLock) {
     createWindow();
     watchDisplays();
     startCursorGuard();
+
+    // If the virtual camera is already registered, keep a placeholder frame in
+    // its shared buffer from the start so other apps never see the filter's
+    // green "sender stopped / never started" pattern.
+    void vcamStatus()
+      .then((status) => {
+        if (status.registered) vcamPrime();
+      })
+      .catch(() => undefined);
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

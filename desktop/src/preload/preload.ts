@@ -36,8 +36,11 @@ const api = {
   vcamStatus: (): Promise<VcamStatus> => ipcRenderer.invoke('vcam:status'),
   vcamEnable: (): Promise<VcamStatus> => ipcRenderer.invoke('vcam:enable'),
   vcamDisable: (): Promise<VcamStatus> => ipcRenderer.invoke('vcam:disable'),
+  vcamStart: (): Promise<boolean> => ipcRenderer.invoke('vcam:start'),
   vcamFrame: (rgba: ArrayBuffer, width: number, height: number): Promise<boolean> =>
     ipcRenderer.invoke('vcam:frame', rgba, width, height),
+  vcamPlaceholder: (rgba: ArrayBuffer, width: number, height: number): Promise<boolean> =>
+    ipcRenderer.invoke('vcam:placeholder', rgba, width, height),
   vcamStop: (): Promise<boolean> => ipcRenderer.invoke('vcam:stop'),
   openDisplaySettings: () => ipcRenderer.invoke('virtualdisplay:settings'),
   openDriverPage: () => ipcRenderer.invoke('virtualdisplay:driver'),
@@ -74,7 +77,9 @@ export type ScApi = {
   vcamStatus: () => Promise<VcamStatus>;
   vcamEnable: () => Promise<VcamStatus>;
   vcamDisable: () => Promise<VcamStatus>;
+  vcamStart: () => Promise<boolean>;
   vcamFrame: (rgba: ArrayBuffer, width: number, height: number) => Promise<boolean>;
+  vcamPlaceholder: (rgba: ArrayBuffer, width: number, height: number) => Promise<boolean>;
   vcamStop: () => Promise<boolean>;
   openDisplaySettings: () => Promise<boolean>;
   openDriverPage: () => Promise<boolean>;

@@ -1,6 +1,6 @@
 {
   "name": "smartconnectlike-desktop",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "SmartConnectLike - local device hub (screen mirroring, extend, facecam, file share, input sharing)",
   "main": "dist/main/index.js",
   "author": "SmartConnectLike",

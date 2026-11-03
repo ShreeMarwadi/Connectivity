@@ -247,9 +247,9 @@ Optional for true extended display: a compatible, signed Windows virtual display
 Download the appropriate build from the repository's releases or build artifacts, if published.
 
 Device	Package
-Windows	Connectivity-Setup-1.0.3.exe
-Windows portable	Connectivity-Portable-1.0.3.zip
-Android	Connectivity-1.0.3.apk
+Windows	Connectivity-Setup-1.0.4.exe
+Windows portable	Connectivity-Portable-1.0.4.zip
+Android	Connectivity-1.0.3.apk (unchanged in 1.0.4)
 Windows
 Download and run the Windows installer, or extract the portable ZIP and launch Connectivity.exe.
 Open Connectivity.
@@ -285,7 +285,8 @@ Use it inside other apps (Zoom, Meet, Discord, OBS, websites)
 The Windows build ships its own virtual-camera driver, so no extra download is needed.
 On Facecam, click Enable virtual camera and approve the Windows admin prompt once per PC.
 In the other app, open its camera picker and choose Connectivity Camera.
-Frames flow only while Facecam is running; when it is stopped the camera shows a black image instead of the last frame.
+Frames flow only while Facecam is running. Before you start Facecam (or after you stop it) the camera shows a dark Connectivity Camera card, so apps never show a broken image or a green test pattern.
+Keep Connectivity running while another app uses the camera. If you fully close the app, the Windows driver falls back to its built-in green "no signal" pattern - reopen Connectivity to bring the card back.
 Disable virtual camera removes the device from Windows again (also needs admin approval).
 If you move the portable folder to another path, enable the virtual camera once more so Windows points at the new location.
 Disable the virtual camera before uninstalling Connectivity or deleting the portable folder; otherwise Windows keeps a camera entry that can no longer load.
@@ -393,7 +394,9 @@ Touch targets are offset	Check display scaling and resolution on the virtual mon
 File transfers fail	Verify local access to TCP port 47801.
 APK will not update	Check signing-certificate compatibility; back up app data before uninstalling.
 Virtual camera missing from other apps	Open Facecam → Enable virtual camera, approve the admin prompt, then restart the app that lists cameras.
-Virtual camera shows black	Start Facecam first; frames are only sent while the stream is live. Press Stop and start again if the tablet reconnected.
+Virtual camera shows the dark "Start Facecam" card	That is the idle state, not an error. Start Facecam in the Connectivity app to send live video.
+Camera is completely green in Discord/Zoom	The Windows driver fell back to its own "no signal" pattern, which only happens when the Connectivity app is not running. Reopen Connectivity (the app replaces that pattern with the dark card) and start Facecam.
+Camera freezes on the last picture	Connectivity keeps re-sending your last frame while the stream is live, so the image never turns green. Press Stop and Start Facecam again if the tablet reconnected.
 Windows blocks the virtual camera	Smart App Control or antivirus may block the bundled driver; allow Connectivity or disable the camera again from Facecam.
 Windows blocks the app	Verify the build's provenance and consult the applicable Windows security or administrator policy.
 ⚠️ Current limitations

@@ -33,8 +33,20 @@ const FORMAT_UINT8 = 0;
 // "please set these to match" warning pattern.
 const RESIZE_LINEAR = 1;
 const MIRROR_DISABLED = 0;
-// How long the filter keeps the last frame on screen while no new frame arrives.
-const FRAME_TIMEOUT_MS = 1000;
+// How long the filter keeps showing our frames while no new one arrives. The
+// filter switches to its green "sender stopped" pattern after `timeout / 200`
+// missed polls, so a generous value avoids green flashes on a small hiccup.
+const FRAME_TIMEOUT_MS = 3000;
+// Re-signal the last frame when the renderer has not produced a new one. This
+// keeps the camera alive (frozen image) instead of falling back to green.
+const HOLD_INTERVAL_MS = 200;
+// While Facecam is not running the camera still receives a quiet placeholder
+// frame, so apps show a dark card instead of the filter's green error pattern.
+// Kept short so opening the camera never shows the pattern for long.
+const IDLE_INTERVAL_MS = 120;
+const IDLE_WIDTH = 1280;
+const IDLE_HEIGHT = 720;
+const MAX_FRAME_BYTES = 3840 * 2160 * 4;
 
 const FILE_MAP_WRITE = 0x0002;
 const SYNCHRONIZE = 0x00100000;
@@ -240,6 +252,10 @@ export async function vcamEnable(): Promise<VcamStatus> {
   if (!status.registered) {
     status.detail =
       'Windows did not accept the camera driver. Smart App Control or antivirus may be blocking the bundled DLL.';
+  } else {
+    // Start the placeholder writer right away so opening the camera in another
+    // app never shows the filter's green "never started" pattern.
+    vcamPrime();
   }
   return status;
 }
@@ -265,6 +281,13 @@ export async function vcamDisable(): Promise<VcamStatus> {
   if (code !== 0 && status.registered) {
     status.detail = 'Admin approval was cancelled, so the camera is still enabled.';
   } else if (!status.registered) {
+    if (holdTimer) {
+      clearInterval(holdTimer);
+      holdTimer = null;
+    }
+    live = false;
+    lastFrame = null;
+    closeSession(true);
     status.detail = 'Virtual camera removed from Windows. You can enable it again any time.';
   }
   return status;
@@ -282,10 +305,44 @@ type Session = {
   lastWrite: number;
 };
 
+type Frame = {
+  /** Tightly packed RGBA pixels, `width * height * 4` bytes. */
+  data: Buffer;
+  width: number;
+  height: number;
+};
+
 let session: Session | null = null;
 let retryAt = 0;
 // Kept alive across sessions so the filter can always find it (sender-side object).
 let wantEvent: { name: string; handle: unknown } | null = null;
+
+/** True while the tablet stream is being pumped into the camera. */
+let live = false;
+/** What kind of picture currently sits in the filter's shared buffer. */
+let bufferLive = false;
+let lastFrame: Frame | null = null;
+let idleFrame: Frame | null = null;
+let holdTimer: NodeJS.Timeout | null = null;
+let lastWriteAt = 0;
+let lastIdleAt = 0;
+let framesWritten = 0;
+let framesSkipped = 0;
+let statsAt = 0;
+
+function defaultIdleFrame(): Frame {
+  if (idleFrame) return idleFrame;
+  const data = Buffer.allocUnsafe(IDLE_WIDTH * IDLE_HEIGHT * 4);
+  // #0b1220 - dark card, clearly "no signal" without the filter's green.
+  for (let i = 0; i < IDLE_WIDTH * IDLE_HEIGHT; i++) {
+    data[i * 4] = 0x0b;
+    data[i * 4 + 1] = 0x12;
+    data[i * 4 + 2] = 0x20;
+    data[i * 4 + 3] = 0xff;
+  }
+  idleFrame = { data, width: IDLE_WIDTH, height: IDLE_HEIGHT };
+  return idleFrame;
+}
 
 function ensureWant(name: string): unknown {
   if (wantEvent && wantEvent.name !== name) {
@@ -308,6 +365,7 @@ function closeSession(zero = true): void {
   if (!session) return;
   const current = session;
   session = null;
+  bufferLive = false;
   try {
     if (zero && current.pointer) {
       koffi.encode(current.pointer, 4, 'int32', 0); // width = 0 -> "capture inactive"
@@ -408,29 +466,35 @@ function openSession(): Session | null {
 }
 
 /**
- * Push one RGBA frame into the filter's shared buffer. Returns true when the
- * frame reached an app that currently has the camera open.
+ * Writes one frame (32-byte header + tightly packed RGBA) into the filter's
+ * shared buffer. Returns true when it reached a consumer. `isLive` records
+ * whether the pixels are tablet video or the idle placeholder card.
  */
-export function vcamFrame(frame: ArrayBuffer, width: number, height: number): boolean {
+function writeFrame(frame: Frame, isLive = true): boolean {
   loadApi();
   if (!api) return false;
-  if (!frame || width <= 0 || height <= 0 || frame.byteLength < width * height * 4) return false;
+
+  const { data, width, height } = frame;
+  const dataSize = width * height * 4;
+  if (dataSize <= 0 || dataSize > data.length) return false;
 
   if (!session) {
     if (Date.now() < retryAt) return false;
     session = openSession();
     if (!session) {
-      retryAt = Date.now() + 250;
+      retryAt = Date.now() + 100;
       return false;
     }
   }
 
   const current = session;
-  const dataSize = width * height * 4;
   if (dataSize > current.capacity) return false;
 
   const wait = api.WaitForSingleObject(current.mutex, 400);
-  if (wait !== WAIT_OBJECT_0 && wait !== WAIT_ABANDONED) return false;
+  if (wait !== WAIT_OBJECT_0 && wait !== WAIT_ABANDONED) {
+    framesSkipped++;
+    return false;
+  }
   try {
     const total = HEADER_SIZE + dataSize;
     let scratch = current.scratch;
@@ -446,7 +510,18 @@ export function vcamFrame(frame: ArrayBuffer, width: number, height: number): bo
     scratch.writeInt32LE(RESIZE_LINEAR, 20);
     scratch.writeInt32LE(MIRROR_DISABLED, 24);
     scratch.writeInt32LE(FRAME_TIMEOUT_MS, 28);
-    Buffer.from(frame, 0, dataSize).copy(scratch, HEADER_SIZE);
+    // DirectShow buffers (positive biHeight) are bottom-up while canvas/video
+    // pixels are top-down, so write the rows in reverse. Without this every
+    // consumer (Discord, Zoom, OBS) shows the camera upside down.
+    const rowBytes = width * 4;
+    for (let y = 0; y < height; y++) {
+      data.copy(
+        scratch,
+        HEADER_SIZE + (height - 1 - y) * rowBytes,
+        y * rowBytes,
+        (y + 1) * rowBytes,
+      );
+    }
     api.memcpy(current.pointer, scratch, total);
   } catch (err) {
     console.warn('[vcam] frame write failed:', (err as Error).message);
@@ -460,17 +535,148 @@ export function vcamFrame(frame: ArrayBuffer, width: number, height: number): bo
     }
   }
 
-  api.SetEvent(current.sent);
+  try {
+    api.SetEvent(current.sent);
+  } catch {
+    /* ignore */
+  }
   current.lastWrite = Date.now();
+  lastWriteAt = current.lastWrite;
+  bufferLive = isLive;
+  framesWritten++;
+  if (live && lastWriteAt - statsAt > 10000) {
+    statsAt = lastWriteAt;
+    console.log(`[vcam] live feed: ${framesWritten} frames, ${framesSkipped} skipped`);
+  }
   return true;
 }
 
-/** Called when the stream stops so the camera shows "no signal" again. */
+/**
+ * Re-signals the filter without touching the shared pixels. The buffer already
+ * holds the frame we want on screen, so a full 3.5 MB copy every tick is
+ * pointless: the filter only needs the "sent" event to keep painting it.
+ */
+function signalSent(): boolean {
+  if (!api || !session) return false;
+  try {
+    api.SetEvent(session.sent);
+  } catch {
+    return false;
+  }
+  lastWriteAt = Date.now();
+  framesWritten++;
+  if (live && lastWriteAt - statsAt > 10000) {
+    statsAt = lastWriteAt;
+    console.log(`[vcam] live feed: ${framesWritten} frames, ${framesSkipped} skipped`);
+  }
+  return true;
+}
+
+/**
+ * Background writer. Two jobs:
+ *  - while Facecam runs, re-send the last frame if the renderer stalls (a
+ *    frozen picture instead of the filter's green "stopped" pattern),
+ *  - while Facecam is idle, keep a dark placeholder in the buffer so apps show
+ *    a plain "no signal" card instead of the green "never started" pattern.
+ */
+function holdTick(): void {
+  if (!api) return;
+  const now = Date.now();
+
+  if (live && lastFrame) {
+    // Fresh frames arrive faster than this; only keep the picture alive when
+    // the renderer is quiet, and never let the filter's timeout kick in.
+    if (now - lastWriteAt < HOLD_INTERVAL_MS) return;
+    if (bufferLive && signalSent()) return;
+    writeFrame(lastFrame, true);
+    return;
+  }
+
+  if (now - lastIdleAt < IDLE_INTERVAL_MS) return;
+  if (!bufferLive && signalSent()) {
+    lastIdleAt = now;
+    return;
+  }
+  // No session yet (no app has opened the camera): a full write attaches to the
+  // filter's shared buffer, then the cheap keepalive takes over. Also used to
+  // replace the last live picture with the idle card.
+  if (writeFrame(idleFrame ?? defaultIdleFrame(), false)) lastIdleAt = now;
+}
+
+/** Starts the background writer (no-op when already running). */
+export function vcamPrime(): boolean {
+  loadApi();
+  if (!api) return false;
+  if (!holdTimer) holdTimer = setInterval(holdTick, 100);
+  return true;
+}
+
+/** Facecam started: the renderer is about to pump frames. */
+export function vcamStart(): boolean {
+  if (!vcamPrime()) return false;
+  live = true;
+  lastFrame = null;
+  statsAt = Date.now();
+  framesWritten = 0;
+  framesSkipped = 0;
+  return true;
+}
+
+/**
+ * Push one RGBA frame from the renderer. The frame is copied so the hold timer
+ * can repeat it if the renderer stalls.
+ */
+export function vcamFrame(frame: ArrayBuffer, width: number, height: number): boolean {
+  if (!frame || width <= 0 || height <= 0) return false;
+  const dataSize = width * height * 4;
+  if (dataSize > MAX_FRAME_BYTES || frame.byteLength < dataSize) return false;
+  if (!vcamPrime()) return false;
+
+  live = true;
+  let stored = lastFrame;
+  if (!stored || stored.data.length !== dataSize) {
+    stored = { data: Buffer.allocUnsafe(dataSize), width, height };
+    lastFrame = stored;
+  } else {
+    stored.width = width;
+    stored.height = height;
+  }
+  Buffer.from(frame, 0, dataSize).copy(stored.data);
+  return writeFrame(stored);
+}
+
+/** Facecam stopped: switch the camera to the dark placeholder (never green). */
 export function vcamStop(): void {
-  closeSession(true);
+  live = false;
+  lastFrame = null;
+  if (!vcamPrime()) return;
+  // If this write is blocked for a moment the idle tick retries it, because
+  // `bufferLive` still says the camera holds tablet video.
+  if (writeFrame(idleFrame ?? defaultIdleFrame(), false)) lastIdleAt = Date.now();
+}
+
+/** Renderer-drawn "start Facecam" card used while nothing is streaming. */
+export function vcamPlaceholder(frame: ArrayBuffer, width: number, height: number): boolean {
+  if (!frame || width <= 0 || height <= 0) return false;
+  const dataSize = width * height * 4;
+  if (dataSize > MAX_FRAME_BYTES || frame.byteLength < dataSize) return false;
+  const data = Buffer.allocUnsafe(dataSize);
+  Buffer.from(frame, 0, dataSize).copy(data);
+  idleFrame = { data, width, height };
+  if (live) return true;
+  if (!vcamPrime()) return false;
+  if (writeFrame(idleFrame, false)) lastIdleAt = Date.now();
+  return true;
 }
 
 export function disposeVcam(): void {
+  if (holdTimer) {
+    clearInterval(holdTimer);
+    holdTimer = null;
+  }
+  live = false;
+  lastFrame = null;
+  idleFrame = null;
   closeSession(true);
   try {
     if (wantEvent) api?.CloseHandle(wantEvent.handle);

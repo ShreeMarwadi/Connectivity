@@ -3,10 +3,7 @@ import type { PeerInfo, VcamStatus } from '../../../shared/types';
 import { Icon } from '../components/Icons';
 import { Card, EmptyState, Pill, Toggle } from '../components/UI';
 import type { SessionMode } from '../lib/rtc';
-
-const FEED_WIDTH = 1280;
-const FEED_HEIGHT = 720;
-const FEED_INTERVAL = 66; // ~15 fps is plenty for a webcam and keeps CPU low
+import { setVcamMirror, setVcamRegistered, subscribeVcamSending } from '../lib/vcamFeed';
 
 function Preview({
   stream,
@@ -118,71 +115,17 @@ export default function Facecam({
     }
   };
 
-  // Feed the live tablet camera into the Windows virtual camera while streaming.
+  // The pump lives in lib/vcamFeed so it keeps running on every page; this page
+  // only mirrors the settings and shows the status.
   useEffect(() => {
-    if (!hasPreview || !vcam?.registered) {
-      setPumping(false);
-      return;
-    }
+    setVcamRegistered(!!vcam?.registered);
+  }, [vcam?.registered]);
 
-    const canvas = document.createElement('canvas');
-    canvas.width = FEED_WIDTH;
-    canvas.height = FEED_HEIGHT;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return;
+  useEffect(() => {
+    setVcamMirror(mirrorFeed);
+  }, [mirrorFeed]);
 
-    let frame = 0;
-    let last = 0;
-    let stopped = false;
-    let wasSending = false;
-
-    const report = (sent: boolean) => {
-      if (sent === wasSending) return;
-      wasSending = sent;
-      setPumping(sent);
-    };
-
-    const tick = (now: number) => {
-      if (stopped) return;
-      frame = requestAnimationFrame(tick);
-      if (now - last < FEED_INTERVAL) return;
-      last = now;
-
-      const video = videoRef.current;
-      if (!video || video.readyState < 2 || !video.videoWidth) return;
-
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, FEED_WIDTH, FEED_HEIGHT);
-      const scale = Math.min(FEED_WIDTH / video.videoWidth, FEED_HEIGHT / video.videoHeight);
-      const width = video.videoWidth * scale;
-      const height = video.videoHeight * scale;
-      const x = (FEED_WIDTH - width) / 2;
-      const y = (FEED_HEIGHT - height) / 2;
-      if (mirrorFeed) {
-        ctx.save();
-        ctx.translate(FEED_WIDTH, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(video, FEED_WIDTH - x - width, y, width, height);
-        ctx.restore();
-      } else {
-        ctx.drawImage(video, x, y, width, height);
-      }
-
-      const rgba = ctx.getImageData(0, 0, FEED_WIDTH, FEED_HEIGHT).data;
-      window.sc
-        .vcamFrame(rgba.buffer as ArrayBuffer, FEED_WIDTH, FEED_HEIGHT)
-        .then(report)
-        .catch(() => report(false));
-    };
-
-    frame = requestAnimationFrame(tick);
-    return () => {
-      stopped = true;
-      cancelAnimationFrame(frame);
-      setPumping(false);
-      void window.sc.vcamStop();
-    };
-  }, [hasPreview, vcam?.registered, mirrorFeed]);
+  useEffect(() => subscribeVcamSending(setPumping), []);
 
   const vcamReady = !!vcam?.registered;
   const vcamTone = pumping && vcamReady ? 'ok' : vcamReady ? 'warn' : 'neutral';
@@ -291,7 +234,7 @@ export default function Facecam({
           <p className="note">
             <strong>Inside other apps:</strong> pick <strong>{vcam?.name ?? 'Connectivity Camera'}</strong> in Zoom,
             Meet, Discord, OBS or any website camera picker. Frames only flow while Facecam is running above - until then
-            the camera shows a black image.
+            the camera shows a dark "Start Facecam" card, not a green test pattern.
           </p>
         </Card>
       </div>

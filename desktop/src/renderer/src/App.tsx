@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AppState } from '../../preload/preload';
 import type { CaptureTarget, PeerInfo, Settings, SharedFile, TransferItem, WsEnvelope } from '../../shared/types';
 import { DesktopRtc, type SessionMode } from './lib/rtc';
+import { installVcamPlaceholder } from './lib/vcamPlaceholder';
+import { setVcamRegistered, startVcamFeed, stopVcamFeed } from './lib/vcamFeed';
 import { Sidebar, type Route } from './components/Sidebar';
 import { Icon } from './components/Icons';
 import Home from './pages/Home';
@@ -60,6 +62,9 @@ export default function App() {
 
   useEffect(() => {
     void refresh();
+    // Give the Windows virtual camera a proper "not streaming" card so apps
+    // never fall back to the DirectShow filter's green error pattern.
+    installVcamPlaceholder();
     const offPeers = window.sc.on('peers', (list: PeerInfo[]) => setPeers(list));
     const offTransfers = window.sc.on('transfers', (list: TransferItem[]) => setTransfers(list));
     const offShared = window.sc.on('shared', (list: SharedFile[]) => setShared(list));
@@ -308,6 +313,21 @@ export default function App() {
   useEffect(() => {
     if (state?.settings.theme) document.body.dataset.theme = state.settings.theme;
   }, [state?.settings.theme]);
+
+  useEffect(() => {
+    void window.sc
+      .vcamStatus()
+      .then((status) => setVcamRegistered(status.registered))
+      .catch(() => setVcamRegistered(false));
+  }, []);
+
+  // The tablet camera keeps feeding the virtual camera from any page, and only
+  // while a Facecam stream is actually live.
+  useEffect(() => {
+    if (remoteStream) startVcamFeed(remoteStream);
+    else stopVcamFeed();
+    return () => stopVcamFeed(false);
+  }, [remoteStream]);
 
   if (!state) {
     return (
