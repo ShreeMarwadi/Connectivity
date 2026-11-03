@@ -2,6 +2,15 @@ plugins {
     id 'com.android.application'
 }
 
+// Release signing lives outside version control. Copy android/keystore.properties.example
+// to android/keystore.properties and point it at your own keystore (never commit it).
+def keystoreProps = new Properties()
+def keystorePropsFile = rootProject.file('keystore.properties')
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+def hasKeystore = keystoreProps.getProperty('storeFile') != null
+
 android {
     namespace 'com.smartconnectlike.app'
     compileSdk 34
@@ -10,18 +19,18 @@ android {
         applicationId 'com.smartconnectlike.app'
         minSdk 24
         targetSdk 34
-        versionCode 4
-        versionName '1.0.3'
+        versionCode 5
+        versionName '1.0.4'
     }
 
-    // Local self-signed key so the release APK installs directly (no Play Store involved).
-    // Not a secret: it only proves the APK was not modified after this build.
     signingConfigs {
         release {
-            storeFile file('smartconnectlike-release.jks')
-            storePassword 'redacted-use-keystore-properties'
-            keyAlias 'smartconnectlike'
-            keyPassword 'redacted-use-keystore-properties'
+            if (hasKeystore) {
+                storeFile rootProject.file(keystoreProps.getProperty('storeFile'))
+                storePassword keystoreProps.getProperty('storePassword')
+                keyAlias keystoreProps.getProperty('keyAlias')
+                keyPassword keystoreProps.getProperty('keyPassword')
+            }
         }
     }
 
@@ -29,7 +38,7 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.release
+            if (hasKeystore) signingConfig signingConfigs.release
         }
     }
 

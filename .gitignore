@@ -13,6 +13,12 @@ android/local.properties
 *.iml
 .idea/
 
+# signing keys and their passwords - never commit these
+*.jks
+*.keystore
+*.p12
+keystore.properties
+
 # logs & os junk
 *.log
 Thumbs.db
