@@ -5,6 +5,10 @@ import android.content.Intent;
 import android.util.Log;
 
 import org.json.JSONObject;
+import org.webrtc.Camera1Enumerator;
+import org.webrtc.Camera2Enumerator;
+import org.webrtc.CameraEnumerator;
+import org.webrtc.CameraVideoCapturer;
 import org.webrtc.DataChannel;
 import org.webrtc.DefaultVideoDecoderFactory;
 import org.webrtc.DefaultVideoEncoderFactory;
@@ -44,6 +48,10 @@ public class RtcClient {
 
         void onRemoteTrack(VideoTrack track);
 
+        /** Fires when this device is sending its own camera (facecam preview). */
+        default void onLocalTrack(VideoTrack track) {
+        }
+
         void onError(String message);
     }
 
@@ -64,6 +72,12 @@ public class RtcClient {
     private ScreenCapturerAndroid capturer;
     private VideoSource screenSource;
     private SurfaceTextureHelper textureHelper;
+
+    private CameraVideoCapturer cameraCapturer;
+    private CameraEnumerator cameraEnumerator;
+    private VideoSource cameraSource;
+    private SurfaceTextureHelper cameraHelper;
+    private String cameraName;
 
     private String session;
     private String mode = "mirror-pc";
@@ -160,11 +174,110 @@ public class RtcClient {
         });
     }
 
-    public void handleSignal(JSONObject message) {
-        worker.execute(() -> handleSignalBlocking(message));
+    /**
+     * Turns this tablet into a webcam: captures the camera and offers the stream to the PC.
+     * Used by the "Facecam" mode so the tablet can feed any app on the PC.
+     */
+    public void startCamera(String mode, boolean frontFacing) {
+        this.mode = mode;
+        this.stopped = false;
+        worker.execute(() -> {
+            try {
+                ensureFactory();
+                closePeer();
+                this.session = UUID.randomUUID().toString();
+                PeerConnection connection = createPeer();
+
+                cameraEnumerator = Camera2Enumerator.isSupported(context)
+                        ? new Camera2Enumerator(context)
+                        : new Camera1Enumerator(true);
+                cameraName = pickCamera(frontFacing);
+                if (cameraName == null) throw new IllegalStateException("No camera found on this tablet");
+
+                cameraCapturer = cameraEnumerator.createCapturer(cameraName, new CameraVideoCapturer.CameraEventsHandler() {
+                    @Override
+                    public void onCameraError(String errorDescription) {
+                        emit("camera-error");
+                    }
+
+                    @Override
+                    public void onCameraDisconnected() {
+                        emit("camera-disconnected");
+                    }
+
+                    @Override
+                    public void onCameraFreezed(String errorDescription) {
+                    }
+
+                    @Override
+                    public void onCameraOpening(String name) {
+                        emit("opening-camera");
+                    }
+
+                    @Override
+                    public void onFirstFrameAvailable() {
+                        emit("sharing");
+                    }
+
+                    @Override
+                    public void onCameraClosed() {
+                    }
+                });
+                if (cameraCapturer == null) throw new IllegalStateException("Could not open the camera");
+
+                cameraSource = factory.createVideoSource(false);
+                cameraHelper = SurfaceTextureHelper.create("SC-Camera", eglBase.getEglBaseContext());
+                cameraCapturer.initialize(cameraHelper, context, cameraSource.getCapturerObserver());
+                cameraCapturer.startCapture(1280, 720, 30);
+
+                localTrack = factory.createVideoTrack("camera0", cameraSource);
+                localTrack.setEnabled(true);
+                connection.addTrack(localTrack, Collections.singletonList("camera"));
+
+                if (listener != null) {
+                    final VideoTrack previewTrack = localTrack;
+                    listener.onLocalTrack(previewTrack);
+                }
+
+                SessionDescription offer = awaitOffer(connection);
+                if (offer == null) throw new IllegalStateException("Could not create offer");
+                awaitSetLocal(connection, offer);
+                sendSignal("offer", offer.description);
+                emit("sharing");
+            } catch (Exception err) {
+                fail(err);
+            }
+        });
     }
 
-    private void handleSignalBlocking(JSONObject message) {
+    private String pickCamera(boolean frontFacing) {
+        String[] names = cameraEnumerator.getDeviceNames();
+        for (String name : names) {
+            boolean front = cameraEnumerator.isFrontFacing(name);
+            if (frontFacing ? front : !front) return name;
+        }
+        return names.length > 0 ? names[0] : null;
+    }
+
+    /** Switches between the front and back camera while a facecam session is live. */
+    public void switchCamera() {
+        worker.execute(() -> {
+            if (cameraCapturer == null) return;
+            try {
+                cameraCapturer.switchCamera(null);
+            } catch (Exception err) {
+                Log.w(TAG, "switchCamera failed", err);
+            }
+        });
+    }
+
+    public VideoTrack localVideoTrack() {
+        return localTrack;
+    }
+
+    public void handleSignal(JSONObject message) {
+        worker.execute(() -> handleSignalBlocking(message));
+    }    private void handleSignalBlocking(JSONObject message) {
         try {
             JSONObject data = message.optJSONObject("data");
             if (data == null) return;
@@ -447,6 +560,22 @@ public class RtcClient {
         stopped = true;
         worker.execute(() -> {
             try {
+                if (cameraCapturer != null) {
+                    try {
+                        cameraCapturer.stopCapture();
+                    } catch (Exception ignored) {
+                    }
+                    cameraCapturer.dispose();
+                    cameraCapturer = null;
+                }
+                if (cameraSource != null) {
+                    cameraSource.dispose();
+                    cameraSource = null;
+                }
+                if (cameraHelper != null) {
+                    cameraHelper.dispose();
+                    cameraHelper = null;
+                }
                 if (capturer != null) {
                     capturer.stopCapture();
                     capturer.dispose();

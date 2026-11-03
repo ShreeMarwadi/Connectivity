@@ -21,6 +21,8 @@ export interface Settings {
   autoAccept: boolean;
   clipboardSync: boolean;
   inputEnabled: boolean;
+  /** Keep the pointer off an idle virtual monitor (the tablet screen) when no session is live. */
+  cursorGuard: boolean;
   quality: 'balanced' | 'quality' | 'speed';
 }
 
@@ -73,4 +75,15 @@ export interface WindowSource {
   name: string;
   thumbnail: string;
   icon: string | null;
+}
+
+/** State of the bundled Windows virtual camera (DirectShow filter). */
+export interface VcamStatus {
+  supported: boolean;
+  /** The DLLs are present in this installation. */
+  driverPresent: boolean;
+  /** Windows knows the camera and apps can pick it. */
+  registered: boolean;
+  name: string;
+  detail: string;
 }

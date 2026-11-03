@@ -1,12 +1,13 @@
 import { Icon, type IconName } from './Icons';
 
-export type Route = 'home' | 'devices' | 'mirror' | 'extend' | 'share' | 'settings';
+export type Route = 'home' | 'devices' | 'mirror' | 'extend' | 'facecam' | 'share' | 'settings';
 
 const items: { route: Route; label: string; icon: IconName }[] = [
   { route: 'home', label: 'Overview', icon: 'home' },
   { route: 'devices', label: 'Devices', icon: 'devices' },
   { route: 'mirror', label: 'Mirror & control', icon: 'mirror' },
   { route: 'extend', label: 'Extend display', icon: 'extend' },
+  { route: 'facecam', label: 'Facecam', icon: 'camera' },
   { route: 'share', label: 'File sharing', icon: 'share' },
   { route: 'settings', label: 'Settings', icon: 'settings' },
 ];

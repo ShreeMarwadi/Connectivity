@@ -31,6 +31,9 @@ New-Item -ItemType Directory -Force -Path $out | Out-Null
 Copy-Item (Join-Path $electron '*') $out -Recurse -Force
 Copy-Item (Join-Path $packed 'app.asar') (Join-Path $out 'resources\app.asar') -Force
 Copy-Item (Join-Path $packed 'app.asar.unpacked') (Join-Path $out 'resources\app.asar.unpacked') -Recurse -Force
+if (Test-Path (Join-Path $packed 'vcam')) {
+  Copy-Item (Join-Path $packed 'vcam') (Join-Path $out 'resources\vcam') -Recurse -Force
+}
 Remove-Item (Join-Path $out 'resources\default_app.asar') -ErrorAction SilentlyContinue
 Rename-Item (Join-Path $out 'electron.exe') 'Connectivity.exe'
 

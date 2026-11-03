@@ -1,7 +1,7 @@
 {
   "name": "smartconnectlike-desktop",
-  "version": "1.0.1",
-  "description": "SmartConnectLike - local device hub (screen mirroring, extend, file share, input sharing)",
+  "version": "1.0.3",
+  "description": "SmartConnectLike - local device hub (screen mirroring, extend, facecam, file share, input sharing)",
   "main": "dist/main/index.js",
   "author": "SmartConnectLike",
   "license": "MIT",
@@ -48,6 +48,16 @@
     "files": [
       "dist/**/*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/vcam",
+        "to": "vcam",
+        "filter": [
+          "*.dll",
+          "LICENSE.txt"
+        ]
+      }
     ],
     "win": {
       "target": [

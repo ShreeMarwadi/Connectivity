@@ -13,6 +13,7 @@ const DEFAULTS: Settings = {
   autoAccept: true,
   clipboardSync: true,
   inputEnabled: true,
+  cursorGuard: true,
   quality: 'balanced',
 };
 

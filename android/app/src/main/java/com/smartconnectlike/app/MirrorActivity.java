@@ -24,6 +24,7 @@ import java.util.UUID;
 
 public class MirrorActivity extends AppCompatActivity implements Core.Listener {
     public static final String EXTRA_MODE = "mode";
+    private static final int REQ_CAMERA = 21;
 
     private Core core;
     private SurfaceViewRenderer renderer;
@@ -59,32 +60,46 @@ public class MirrorActivity extends AppCompatActivity implements Core.Listener {
         titleView.setText(titleFor(mode));
         hintView.setText(mode.equals("extend")
                 ? "Touch to click inside the extended display"
-                : "Tap to click · drag to move the pointer");
+                : mode.equals("webcam")
+                        ? "Your tablet camera is live on the PC · tap here to flip"
+                        : "Tap to click · drag to move the pointer");
 
         renderer.init(core.rtc.eglContext(), null);
         renderer.setEnableHardwareScaler(true);
-        renderer.setMirror(false);
+        renderer.setMirror(mode.equals("webcam"));
 
         core.rtc.setListener(new RtcClient.Listener() {
             @Override
             public void onState(String state) {
                 runOnUiThread(() -> {
                     statusView.setText(stateLabel(state));
-                    if ("connected".equals(state)) {
+                    // In facecam mode the hint doubles as the flip button, so keep it visible.
+                    if ("connected".equals(state) && !mode.equals("webcam")) {
                         hintView.setVisibility(View.GONE);
-                        if (waitView != null) waitView.setVisibility(View.GONE);
                     }
+                    if ("connected".equals(state) && waitView != null) waitView.setVisibility(View.GONE);
                 });
             }
 
             @Override
             public void onRemoteTrack(VideoTrack track) {
                 runOnUiThread(() -> {
-                    hintView.setVisibility(View.GONE);
+                    if (!mode.equals("webcam")) hintView.setVisibility(View.GONE);
                     // The "Waiting for video…" label used to stay on screen forever and
                     // showed up as a watermark in the middle of the extended display.
                     if (waitView != null) waitView.setVisibility(View.GONE);
                     statusView.setText("Live");
+                });
+            }
+
+            @Override
+            public void onLocalTrack(VideoTrack track) {
+                runOnUiThread(() -> {
+                    if (waitView != null) waitView.setVisibility(View.GONE);
+                    if (renderer != null) {
+                        track.addSink(renderer);
+                    }
+                    statusView.setText("Camera live");
                 });
             }
 
@@ -98,11 +113,51 @@ public class MirrorActivity extends AppCompatActivity implements Core.Listener {
         });
 
         core.addListener(this);
-        core.rtc.prepareViewer(renderer, mode, session);
-        sendSessionRequest();
+        if (mode.equals("webcam")) {
+            touchLayer.setVisibility(View.GONE);
+            hintView.setOnClickListener(v -> {
+                core.rtc.switchCamera();
+                Toast.makeText(this, "Switching camera", Toast.LENGTH_SHORT).show();
+            });
+            renderer.setOnClickListener(v -> {
+                core.rtc.switchCamera();
+                Toast.makeText(this, "Switching camera", Toast.LENGTH_SHORT).show();
+            });
+            ensureCameraPermissionThenStart();
+        } else {
+            core.rtc.prepareViewer(renderer, mode, session);
+            sendSessionRequest();
+        }
 
         findViewById(R.id.btnCloseMirror).setOnClickListener(v -> finish());
         touchLayer.setOnTouchListener(this::onTouchPad);
+    }
+
+    private void ensureCameraPermissionThenStart() {
+        if (checkSelfPermission(android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            startFacecam();
+            return;
+        }
+        requestPermissions(new String[] { android.Manifest.permission.CAMERA }, REQ_CAMERA);
+    }
+
+    private void startFacecam() {
+        statusView.setText("Opening camera…");
+        // Tells the PC that this session is the tablet camera (and clears its open-viewer timer).
+        sendSessionRequest();
+        core.rtc.startCamera("webcam", true);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQ_CAMERA) return;
+        if (grantResults.length > 0 && grantResults[0] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            startFacecam();
+        } else {
+            statusView.setText("Camera permission denied");
+            Toast.makeText(this, "Allow the camera so the PC can use it", Toast.LENGTH_LONG).show();
+        }
     }
 
     /**
@@ -132,7 +187,13 @@ public class MirrorActivity extends AppCompatActivity implements Core.Listener {
             hintView.setVisibility(View.VISIBLE);
             hintView.setText(mode.equals("extend")
                     ? "Touch to click inside the extended display"
-                    : "Tap to click · drag to move the pointer");
+                    : mode.equals("webcam")
+                            ? "Your tablet camera is live on the PC · tap here to flip"
+                            : "Tap to click · drag to move the pointer");
+        }
+        if (mode.equals("webcam")) {
+            ensureCameraPermissionThenStart();
+            return;
         }
         if (statusView != null) statusView.setText("Waiting for the PC…");
         if (waitView != null) waitView.setVisibility(View.VISIBLE);
@@ -141,7 +202,9 @@ public class MirrorActivity extends AppCompatActivity implements Core.Listener {
     }
 
     private String titleFor(String value) {
-        return "extend".equals(value) ? "Extended display" : "PC screen";
+        if ("extend".equals(value)) return "Extended display";
+        if ("webcam".equals(value)) return "Facecam";
+        return "PC screen";
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -225,6 +288,8 @@ public class MirrorActivity extends AppCompatActivity implements Core.Listener {
         String type = message.optString("type");
         if ("signal".equals(type)) {
             core.rtc.handleSignal(message);
+        } else if ("webcam-switch".equals(type) && "webcam".equals(mode)) {
+            core.rtc.switchCamera();
         } else if ("session-stop".equals(type)) {
             runOnUiThread(() -> {
                 Toast.makeText(this, "Session ended by PC", Toast.LENGTH_SHORT).show();

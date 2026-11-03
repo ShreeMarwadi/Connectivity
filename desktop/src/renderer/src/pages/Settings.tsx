@@ -90,6 +90,12 @@ export default function SettingsPage({
             onChange={(value) => void onChange({ clipboardSync: value })}
           />
           <Toggle
+            label="Keep the mouse on the laptop"
+            description="When the tablet screen is off, stop the pointer from sliding into it"
+            checked={state.settings.cursorGuard}
+            onChange={(value) => void onChange({ cursorGuard: value })}
+          />
+          <Toggle
             label="Touch input forwarding"
             description="Taps and drags on the tablet move the PC cursor"
             checked={state.settings.inputEnabled}

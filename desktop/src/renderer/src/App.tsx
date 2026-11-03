@@ -8,6 +8,7 @@ import Home from './pages/Home';
 import Devices from './pages/Devices';
 import Mirror from './pages/Mirror';
 import Extend from './pages/Extend';
+import Facecam from './pages/Facecam';
 import Share from './pages/Share';
 import SettingsPage from './pages/Settings';
 
@@ -144,11 +145,14 @@ export default function App() {
   const pushToTablet = useCallback(
     async (mode: SessionMode, deviceId: string, target: CaptureTarget) => {
       clearPending();
-      try {
-        await window.sc.setCaptureTarget(target);
-      } catch (err) {
-        toast('error', (err as Error).message || 'Could not prepare capture');
-        return;
+      // Webcam mode captures on the tablet, so the PC does not need a capture target.
+      if (mode !== 'webcam') {
+        try {
+          await window.sc.setCaptureTarget(target);
+        } catch (err) {
+          toast('error', (err as Error).message || 'Could not prepare capture');
+          return;
+        }
       }
       const timer = window.setTimeout(() => {
         if (pendingRef.current && pendingRef.current.deviceId === deviceId) {
@@ -158,7 +162,10 @@ export default function App() {
       }, 15000);
       pendingRef.current = { mode, deviceId, target, timer };
       await window.sc.send(deviceId, { type: 'open-viewer', mode });
-      toast('info', 'Tablet par viewer khul raha hai…');
+      toast(
+        'info',
+        mode === 'webcam' ? 'Tablet par Facecam khul raha hai…' : 'Tablet par viewer khul raha hai…',
+      );
     },
     [clearPending, toast],
   );
@@ -194,6 +201,13 @@ export default function App() {
   useEffect(() => {
     const off = window.sc.on('ws:message', ({ deviceId, msg }: { deviceId: string; msg: WsEnvelope }) => {
       if (msg.type === 'signal') {
+        // Any inbound offer means the tablet is driving this session (screen share or
+        // facecam), so the "viewer did not open" timer for a PC-initiated push is done.
+        const inbound = msg as { mode?: SessionMode; data?: { kind?: string } };
+        if (inbound.data?.kind === 'offer') {
+          clearPending();
+          if (inbound.mode === 'webcam') setRoute('facecam');
+        }
         void rtcRef.current?.handleSignal(deviceId, msg as never);
         return;
       }
@@ -226,6 +240,10 @@ export default function App() {
         } else if (mode === 'extend') {
           setRoute('extend');
           void startStream('extend', deviceId, target);
+        } else if (mode === 'webcam') {
+          // The tablet opens its camera and sends us the offer; nothing to capture here.
+          setRoute('facecam');
+          toast('success', 'Facecam live — tablet camera PC par aa raha hai');
         } else {
           setRoute('mirror');
           toast('info', 'Tablet is sharing its screen');
@@ -233,9 +251,12 @@ export default function App() {
         return;
       }
       if (msg.type === 'session-stop') {
+        const active = rtcRef.current?.activeMode;
         rtcRef.current?.stop(false);
-        void restoreAfterSession();
-        toast('info', 'Session ended by tablet');
+        if (active) {
+          if (active === 'extend') void restoreAfterSession();
+          toast('info', 'Session ended by tablet');
+        }
       }
       if (msg.type === 'clipboard' && msg.text) {
         toast('info', 'Text received from tablet');
@@ -246,9 +267,10 @@ export default function App() {
     // next session choppy).
     const offDisconnected = window.sc.on('ws:disconnected', ({ deviceId }: { deviceId: string }) => {
       if (rtcRef.current?.activeDevice === deviceId) {
+        const active = rtcRef.current?.activeMode;
         clearPending();
         rtcRef.current.stop(true);
-        void restoreAfterSession();
+        if (active === 'extend') void restoreAfterSession();
         toast('info', 'Tablet disconnected — session stopped');
       }
     });
@@ -260,10 +282,18 @@ export default function App() {
 
   const stopStream = useCallback(() => {
     clearPending();
+    const wasExtended = rtcRef.current?.activeMode === 'extend';
     rtcRef.current?.stop(true);
-    void restoreAfterSession();
+    if (wasExtended) void restoreAfterSession();
     toast('info', 'Session stopped');
   }, [clearPending, restoreAfterSession, toast]);
+
+  /** Asks the tablet to switch between its front and back camera. */
+  const flipCamera = useCallback(() => {
+    const device = rtcRef.current?.activeDevice;
+    if (!device) return;
+    void window.sc.send(device, { type: 'webcam-switch' });
+  }, []);
 
   const updateSettings = useCallback(
     async (patch: Partial<Settings>) => {
@@ -293,6 +323,7 @@ export default function App() {
   const primaryPeer = connectedPeers[0]?.id;
   // Prefer the extra (virtual) monitor for "second screen" shortcuts.
   const secondDisplayId = state.displays.find((d) => !d.primary)?.id;
+  const primaryDisplayId = state.displays.find((d) => d.primary)?.id;
 
   return (
     <div className="app">
@@ -387,6 +418,18 @@ export default function App() {
               onStop={stopStream}
             />
           )}
+          {route === 'facecam' && (
+            <Facecam
+              peers={peers}
+              rtcState={rtcState}
+              remoteStream={remoteStream}
+              onStart={(deviceId) =>
+                void pushToTablet('webcam', deviceId, { kind: 'screen', displayId: primaryDisplayId })
+              }
+              onStop={stopStream}
+              onFlip={flipCamera}
+            />
+          )}
           {route === 'share' && (
             <Share
               state={state}
@@ -423,6 +466,8 @@ function titleFor(route: Route): string {
       return 'Mirror & control';
     case 'extend':
       return 'Extend display';
+    case 'facecam':
+      return 'Facecam';
     case 'share':
       return 'File sharing';
     case 'settings':
@@ -440,6 +485,8 @@ function subtitleFor(route: Route): string {
       return 'Stream a screen both ways — no cables, no accounts.';
     case 'extend':
       return 'Turn your tablet into a second screen for this PC.';
+    case 'facecam':
+      return 'Turn your tablet into a webcam for this PC.';
     case 'share':
       return 'Drop files here and grab them instantly on your tablet.';
     case 'settings':

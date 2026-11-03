@@ -1,6 +1,6 @@
 ﻿import type { CaptureTarget, WsEnvelope } from '../../../shared/types';
 
-export type SessionMode = 'mirror-pc' | 'mirror-tablet' | 'extend';
+export type SessionMode = 'mirror-pc' | 'mirror-tablet' | 'extend' | 'webcam';
 
 export interface RtcCallbacks {
   onRemoteStream: (stream: MediaStream | null) => void;

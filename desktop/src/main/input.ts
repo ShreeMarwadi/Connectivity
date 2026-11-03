@@ -302,6 +302,17 @@ export class InputController {
     }
   }
 
+  /** Moves the pointer to an absolute physical pixel position. */
+  setCursor(x: number, y: number): void {
+    loadApi();
+    if (!api) return;
+    try {
+      api.SetCursorPos(Math.round(x), Math.round(y));
+    } catch {
+      /* ignore */
+    }
+  }
+
   private point(x: number, y: number): { px: number; py: number } | null {    this.refreshBounds();
     const bounds = this.bounds;
     if (!bounds) return null;

@@ -87,6 +87,7 @@ public class MainActivity extends AppCompatActivity implements Core.Listener {
         ((MaterialButton) findViewById(R.id.btnViewPc)).setOnClickListener(v -> openMirror("mirror-pc"));
         ((MaterialButton) findViewById(R.id.btnSendFiles)).setOnClickListener(v -> pickFiles());
         ((MaterialButton) findViewById(R.id.btnFilesFromPc)).setOnClickListener(v -> openFiles());
+        ((MaterialButton) findViewById(R.id.btnFacecam)).setOnClickListener(v -> openMirror("webcam"));
 
         core.addListener(this);
         devices.clear();
@@ -149,7 +150,8 @@ public class MainActivity extends AppCompatActivity implements Core.Listener {
         }
         if ("open-viewer".equals(type)) {
             // The PC pressed "Show on tablet": open the viewer so the PC can start sending.
-            String mode = "extend".equals(message.optString("mode")) ? "extend" : "mirror-pc";
+            String requested = message.optString("mode");
+            String mode = "extend".equals(requested) ? "extend" : "webcam".equals(requested) ? "webcam" : "mirror-pc";
             log("PC started a session (" + mode + ") — opening viewer");
             runOnUiThread(() -> openViewer(mode));
         }

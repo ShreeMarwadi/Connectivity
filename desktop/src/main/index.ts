@@ -6,6 +6,7 @@ import { Discovery, primaryAddress } from './discovery';
 import { LocalServer } from './server';
 import { FileService } from './files';
 import { InputController } from './input';
+import { disposeVcam, vcamDisable, vcamEnable, vcamFrame, vcamStatus, vcamStop } from './vcam';
 import { getSettings, updateSettings } from './settings';
 import type { CaptureTarget, DisplayInfo, PeerInfo, Settings, WindowSource, WsEnvelope } from '../shared/types';
 
@@ -21,6 +22,7 @@ const input = new InputController();
 
 let captureTarget: CaptureTarget = { kind: 'screen' };
 let clipboardTimer: NodeJS.Timeout | null = null;
+let cursorGuardTimer: NodeJS.Timeout | null = null;
 let lastClipboard = '';
 
 const preloadPath = path.join(__dirname, '..', 'preload', 'preload.js');
@@ -110,7 +112,81 @@ function restoreAfterSession(): { moved: number; display: string } {
       input.moveCursorHome(home);
     }
   }
+
+  // The session is over: the extra monitor is just a black hole now, so treat the laptop
+  // as the capture target again (the idle cursor guard keys off this).
+  captureTarget = { kind: 'screen', displayId: String(primary.id) };
+  input.setTargetRect(home);
   return { moved, display: primary.label || 'laptop' };
+}
+
+/**
+ * A real monitor reports a model name; virtual displays are either named after their
+ * driver (MTT/Parsec/Idd…) or come back with an empty label.
+ */
+function displayLooksReal(label: string | undefined): boolean {
+  const name = (label || '').trim();
+  if (!name) return false;
+  if (VIRTUAL_LABEL.test(name)) return false;
+  if (/^Display \d+$/i.test(name)) return false;
+  return true;
+}
+
+/** True while the tablet is actually showing that monitor, so the pointer is allowed there. */
+function extraMonitorIsLive(): boolean {
+  if (captureTarget.kind !== 'screen' || !captureTarget.displayId) return false;
+  const primary = screen.getPrimaryDisplay();
+  return captureTarget.displayId !== String(primary.id);
+}
+
+/**
+ * Windows keeps the virtual monitor attached even when the tablet is off (or the session
+ * stopped), so the cursor wanders into an invisible screen and looks like it vanished.
+ * While no session is live, push the pointer back to the edge of the laptop panel.
+ */
+function guardCursor(): void {
+  if (!getSettings().cursorGuard) return;
+  if (extraMonitorIsLive()) return;
+
+  const primary = screen.getPrimaryDisplay();
+  const cursor = screen.getCursorScreenPoint();
+  const pb = primary.bounds;
+  const insidePrimary =
+    cursor.x >= pb.x && cursor.x < pb.x + pb.width && cursor.y >= pb.y && cursor.y < pb.y + pb.height;
+  if (insidePrimary) return;
+
+  const strays = screen
+    .getAllDisplays()
+    .filter((d) => String(d.id) !== String(primary.id) && !displayLooksReal(d.label));
+  const hit = strays.find(
+    (d) =>
+      cursor.x >= d.bounds.x &&
+      cursor.x < d.bounds.x + d.bounds.width &&
+      cursor.y >= d.bounds.y &&
+      cursor.y < d.bounds.y + d.bounds.height,
+  );
+  if (!hit) return;
+
+  // Clamp onto the nearest edge of the laptop screen (with a 3px inset so the pointer stays visible).
+  const inset = 3;
+  const dipX = Math.min(Math.max(cursor.x, pb.x + inset), pb.x + pb.width - inset - 1);
+  const dipY = Math.min(Math.max(cursor.y, pb.y + inset), pb.y + pb.height - inset - 1);
+  const home = physicalBounds(String(primary.id));
+  if (!home) return;
+  const px = home.x + ((dipX - pb.x) / Math.max(1, pb.width)) * home.width;
+  const py = home.y + ((dipY - pb.y) / Math.max(1, pb.height)) * home.height;
+  input.setCursor(px, py);
+}
+
+function startCursorGuard(): void {
+  if (cursorGuardTimer) clearInterval(cursorGuardTimer);
+  cursorGuardTimer = setInterval(() => {
+    try {
+      guardCursor();
+    } catch {
+      /* never let the guard throw */
+    }
+  }, 200);
 }
 
 
@@ -390,6 +466,17 @@ function registerIpc(): void {
   ipcMain.handle('windows:list', () => listWindows());
   ipcMain.handle('displays:list', () => displayList());
 
+  ipcMain.handle('vcam:status', () => vcamStatus());
+  ipcMain.handle('vcam:enable', () => vcamEnable());
+  ipcMain.handle('vcam:disable', () => vcamDisable());
+  ipcMain.handle('vcam:frame', (_e, rgba: ArrayBuffer, width: number, height: number) =>
+    vcamFrame(rgba, width, height),
+  );
+  ipcMain.handle('vcam:stop', () => {
+    vcamStop();
+    return true;
+  });
+
   ipcMain.handle('capture:target', (_e, target: CaptureTarget) => {
     captureTarget = target;
     if (target.kind === 'window') {
@@ -483,6 +570,7 @@ if (!gotLock) {
     startClipboardSync();
     createWindow();
     watchDisplays();
+    startCursorGuard();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -495,6 +583,12 @@ if (!gotLock) {
 
   app.on('before-quit', () => {
     if (clipboardTimer) clearInterval(clipboardTimer);
+    if (cursorGuardTimer) clearInterval(cursorGuardTimer);
+    try {
+      disposeVcam();
+    } catch {
+      /* never block quitting */
+    }
     try {
       restoreAfterSession();
     } catch {

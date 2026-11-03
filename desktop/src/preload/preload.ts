@@ -8,6 +8,7 @@ import type {
   TransferItem,
   WindowSource,
   WsEnvelope,
+  VcamStatus,
 } from '../shared/types';
 
 const channels = [
@@ -32,6 +33,12 @@ const api = {
   clients: () => ipcRenderer.invoke('ws:clients'),
   listWindows: (): Promise<WindowSource[]> => ipcRenderer.invoke('windows:list'),
   listDisplays: (): Promise<DisplayInfo[]> => ipcRenderer.invoke('displays:list'),
+  vcamStatus: (): Promise<VcamStatus> => ipcRenderer.invoke('vcam:status'),
+  vcamEnable: (): Promise<VcamStatus> => ipcRenderer.invoke('vcam:enable'),
+  vcamDisable: (): Promise<VcamStatus> => ipcRenderer.invoke('vcam:disable'),
+  vcamFrame: (rgba: ArrayBuffer, width: number, height: number): Promise<boolean> =>
+    ipcRenderer.invoke('vcam:frame', rgba, width, height),
+  vcamStop: (): Promise<boolean> => ipcRenderer.invoke('vcam:stop'),
   openDisplaySettings: () => ipcRenderer.invoke('virtualdisplay:settings'),
   openDriverPage: () => ipcRenderer.invoke('virtualdisplay:driver'),
   setCaptureTarget: (target: CaptureTarget) => ipcRenderer.invoke('capture:target', target),
@@ -64,6 +71,11 @@ export type ScApi = {
   clients: () => Promise<string[]>;
   listWindows: () => Promise<WindowSource[]>;
   listDisplays: () => Promise<DisplayInfo[]>;
+  vcamStatus: () => Promise<VcamStatus>;
+  vcamEnable: () => Promise<VcamStatus>;
+  vcamDisable: () => Promise<VcamStatus>;
+  vcamFrame: (rgba: ArrayBuffer, width: number, height: number) => Promise<boolean>;
+  vcamStop: () => Promise<boolean>;
   openDisplaySettings: () => Promise<boolean>;
   openDriverPage: () => Promise<boolean>;
   setCaptureTarget: (target: CaptureTarget) => Promise<boolean>;

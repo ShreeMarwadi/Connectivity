@@ -99,6 +99,14 @@ export default function Home({ state, peers, rtcState, onNavigate, onStart, onSt
           badge={live && rtcState.mode === 'extend' ? 'Live' : undefined}
         />
         <Tile
+          icon="camera"
+          title="Facecam"
+          description="Use the tablet camera as this PC's webcam"
+          onClick={() => onNavigate('facecam')}
+          tone="green"
+          badge={live && rtcState.mode === 'webcam' ? 'Live' : undefined}
+        />
+        <Tile
           icon="share"
           title="File sharing"
           description="Drag files and grab them on the tablet"
