@@ -1,4 +1,17 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, screen, session, shell } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  desktopCapturer,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  screen,
+  session,
+  shell,
+  Tray,
+} from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -7,6 +20,12 @@ import { LocalServer } from './server';
 import { FileService } from './files';
 import { InputController } from './input';
 import { disposeVcam, vcamDisable, vcamEnable, vcamFrame, vcamPlaceholder, vcamPrime, vcamStart, vcamStatus, vcamStop } from './vcam';
+import {
+  invalidateVirtualDisplays,
+  isVirtualDisplay,
+  refreshVirtualDisplays,
+  setVirtualDisplayListener,
+} from './virtualdisplay';
 import { getSettings, updateSettings } from './settings';
 import type { CaptureTarget, DisplayInfo, PeerInfo, Settings, WindowSource, WsEnvelope } from '../shared/types';
 
@@ -15,12 +34,21 @@ const isDev = process.env.NODE_ENV === 'development';
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://localhost:5173';
 
 let mainWindow: BrowserWindow | null = null;
+let tray: Tray | null = null;
+let isQuitting = false;
 let discovery: Discovery | null = null;
 let server: LocalServer | null = null;
 const fileService = new FileService();
 const input = new InputController();
 
 let captureTarget: CaptureTarget = { kind: 'screen' };
+/**
+ * True only while the tablet is *actually* connected to an extend stream. It is not
+ * enough for `captureTarget` to point at the virtual monitor: a start that failed or
+ * timed out leaves that target behind, and keying the guard off it kept the pointer
+ * free to wander into the invisible screen.
+ */
+let extendSessionLive = false;
 let clipboardTimer: NodeJS.Timeout | null = null;
 let cursorGuardTimer: NodeJS.Timeout | null = null;
 let lastClipboard = '';
@@ -40,12 +68,6 @@ function peersWithStatus() {
   return discovery.peerList().map((peer) => ({ ...peer, connected: connected.has(peer.id) }));
 }
 
-/**
- * A virtual display driver (MTT VDD, Parsec VDD, IddSample…) shows up as an extra
- * monitor. Its label varies, so fall back to "not the primary screen".
- */
-const VIRTUAL_LABEL = /virtual|vdd|mtt|parsec|idd|spacedesk|dummy|indirect/i;
-
 function displayList(): DisplayInfo[] {
   const displays = screen.getAllDisplays();
   return displays.map((display) => ({
@@ -55,7 +77,7 @@ function displayList(): DisplayInfo[] {
     height: display.size.height,
     scaleFactor: display.scaleFactor,
     primary: display.id === screen.getPrimaryDisplay().id,
-    virtual: VIRTUAL_LABEL.test(display.label || ''),
+    virtual: isVirtualDisplay(display.label),
     bounds: {
       x: display.bounds.x,
       y: display.bounds.y,
@@ -89,6 +111,10 @@ function physicalBounds(displayId: string): { x: number; y: number; width: numbe
  * invisible: windows dragged over come back to the laptop and the pointer is parked home.
  */
 function restoreAfterSession(): { moved: number; display: string } {
+  // A session is over no matter which early return we take below: never leave the
+  // guard thinking the tablet is still showing the extra monitor.
+  extendSessionLive = false;
+
   const primary = screen.getPrimaryDisplay();
   const home = physicalBounds(String(primary.id));
   if (!home) return { moved: 0, display: '' };
@@ -121,19 +147,11 @@ function restoreAfterSession(): { moved: number; display: string } {
 }
 
 /**
- * A real monitor reports a model name; virtual displays are either named after their
- * driver (MTT/Parsec/Idd…) or come back with an empty label.
+ * True only while a live extend session is actually streaming that monitor. A stale
+ * capture target from a failed/timed-out start must never free the pointer.
  */
-function displayLooksReal(label: string | undefined): boolean {
-  const name = (label || '').trim();
-  if (!name) return false;
-  if (VIRTUAL_LABEL.test(name)) return false;
-  if (/^Display \d+$/i.test(name)) return false;
-  return true;
-}
-
-/** True while the tablet is actually showing that monitor, so the pointer is allowed there. */
 function extraMonitorIsLive(): boolean {
+  if (!extendSessionLive) return false;
   if (captureTarget.kind !== 'screen' || !captureTarget.displayId) return false;
   const primary = screen.getPrimaryDisplay();
   return captureTarget.displayId !== String(primary.id);
@@ -157,7 +175,7 @@ function guardCursor(): void {
 
   const strays = screen
     .getAllDisplays()
-    .filter((d) => String(d.id) !== String(primary.id) && !displayLooksReal(d.label));
+    .filter((d) => String(d.id) !== String(primary.id) && isVirtualDisplay(d.label));
   const hit = strays.find(
     (d) =>
       cursor.x >= d.bounds.x &&
@@ -180,13 +198,17 @@ function guardCursor(): void {
 
 function startCursorGuard(): void {
   if (cursorGuardTimer) clearInterval(cursorGuardTimer);
-  cursorGuardTimer = setInterval(() => {
+  const tick = (): void => {
     try {
       guardCursor();
     } catch {
       /* never let the guard throw */
     }
-  }, 200);
+  };
+  // Re-arm immediately: the pointer may already be parked on the idle virtual screen
+  // from a previous run, and there is no reason to wait for the first 200 ms tick.
+  tick();
+  cursorGuardTimer = setInterval(tick, 200);
 }
 
 
@@ -223,9 +245,57 @@ function createWindow(): void {
   }
 
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  // Closing the window hides it to the tray instead of quitting: the network server
+  // and the cursor guard must keep running so the virtual screen cannot swallow the
+  // pointer while the app is "off". Quit is an explicit tray action.
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    mainWindow?.hide();
+  });
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+}
+
+function showWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+async function createTray(): Promise<void> {
+  if (tray) return;
+  let icon = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'build', 'icon.png'));
+  if (icon.isEmpty()) {
+    try {
+      icon = await app.getFileIcon(process.execPath, { size: 'small' });
+    } catch {
+      /* fall through: no icon means no tray, the app still works */
+    }
+  }
+  if (icon.isEmpty()) return;
+
+  tray = new Tray(icon);
+  tray.setToolTip('Connectivity');
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Open Connectivity', click: () => showWindow() },
+      { type: 'separator' },
+      {
+        label: 'Quit',
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ]),
+  );
+  tray.on('double-click', () => showWindow());
 }
 
 /** `window:<hwnd>:<timestamp>` -> hwnd, so touch input can be mapped onto it. */
@@ -435,7 +505,17 @@ function statePayload() {
 
 function watchDisplays(): void {
   // Driver installed / monitor unplugged / resolution changed → refresh the UI live.
-  const notify = (): void => send('state', statePayload());
+  const notify = (): void => {
+    invalidateVirtualDisplays();
+    void refreshVirtualDisplays();
+    send('state', statePayload());
+    // A monitor may have appeared under the pointer; re-check right away.
+    try {
+      guardCursor();
+    } catch {
+      /* never let the guard throw */
+    }
+  };
   screen.on('display-added', notify);
   screen.on('display-removed', notify);
   screen.on('display-metrics-changed', notify);
@@ -503,6 +583,21 @@ function registerIpc(): void {
 
   ipcMain.handle('session:restore', () => restoreAfterSession());
 
+  // The renderer is the only side that knows whether WebRTC actually connected, so it
+  // tells us when the tablet is truly showing the extra monitor. Until then the guard
+  // stays armed, even if a capture target was already prepared.
+  ipcMain.handle('session:live', (_e, live: boolean) => {
+    extendSessionLive = !!live;
+    if (!extendSessionLive) {
+      try {
+        guardCursor();
+      } catch {
+        /* never let the guard throw */
+      }
+    }
+    return true;
+  });
+
   ipcMain.handle('virtualdisplay:settings', () => {
     void shell.openExternal('ms-settings:display');
     return true;
@@ -565,12 +660,7 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
-    }
-  });
+  app.on('second-instance', () => showWindow());
 
   app.whenReady().then(async () => {
     setupDisplayCapture();
@@ -578,7 +668,21 @@ if (!gotLock) {
     await startServer();
     startDiscovery();
     startClipboardSync();
+
+    // Once PnP confirms which monitors are virtual, re-check the pointer and refresh
+    // the Extend page's labels (a custom EDID can otherwise look like a real screen).
+    setVirtualDisplayListener(() => {
+      send('state', statePayload());
+      try {
+        guardCursor();
+      } catch {
+        /* never let the guard throw */
+      }
+    });
+    void refreshVirtualDisplays();
+
     createWindow();
+    void createTray();
     watchDisplays();
     startCursorGuard();
 
@@ -591,9 +695,7 @@ if (!gotLock) {
       })
       .catch(() => undefined);
 
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    });
+    app.on('activate', () => showWindow());
   });
 
   app.on('window-all-closed', () => {
@@ -601,6 +703,8 @@ if (!gotLock) {
   });
 
   app.on('before-quit', () => {
+    // Allow the window's close handler to actually close (instead of hiding to tray).
+    isQuitting = true;
     if (clipboardTimer) clearInterval(clipboardTimer);
     if (cursorGuardTimer) clearInterval(cursorGuardTimer);
     try {
@@ -615,5 +719,7 @@ if (!gotLock) {
     }
     discovery?.stop();
     server?.stop();
+    tray?.destroy();
+    tray = null;
   });
 }

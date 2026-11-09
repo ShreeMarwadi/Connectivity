@@ -96,6 +96,10 @@ export default function App() {
         onLocalStream: setLocalStream,
         onState: (connectionState, mode) => {
           setRtcState({ state: connectionState, mode });
+          // Only a connected extend stream may free the pointer onto the virtual monitor.
+          // Reporting the real WebRTC state keeps a failed/timed-out start from leaving
+          // the guard disarmed forever.
+          void window.sc.setSessionLive(connectionState === 'connected' && mode === 'extend');
           // A session that ends on its own (track ended, connection closed) must also
           // bring the windows home, not only the Stop button.
           if (connectionState === 'idle' && mode === 'extend') restoreRef.current();
@@ -163,6 +167,10 @@ export default function App() {
         if (pendingRef.current && pendingRef.current.deviceId === deviceId) {
           pendingRef.current = null;
           toast('error', 'Tablet ne viewer nahi khola — tablet par Connectivity app khula rakho');
+          // The session never started: drop the prepared target and re-arm the guard,
+          // otherwise the pointer is allowed onto the virtual monitor forever.
+          void window.sc.setSessionLive(false);
+          void restoreAfterSession();
         }
       }, 15000);
       pendingRef.current = { mode, deviceId, target, timer };
@@ -172,7 +180,7 @@ export default function App() {
         mode === 'webcam' ? 'Tablet par Facecam khul raha hai…' : 'Tablet par viewer khul raha hai…',
       );
     },
-    [clearPending, toast],
+    [clearPending, restoreAfterSession, toast],
   );
 
   useEffect(() => () => clearPending(), [clearPending]);
@@ -198,9 +206,12 @@ export default function App() {
         );
       } catch (err) {
         toast('error', (err as Error).message || 'Could not start screen sharing');
+        // Capture failed, so no session is live: never leave the cursor guard disarmed.
+        void window.sc.setSessionLive(false);
+        void restoreAfterSession();
       }
     },
-    [toast],
+    [restoreAfterSession, toast],
   );
 
   useEffect(() => {
